@@ -3,13 +3,15 @@ from llama_index.core.schema import BaseNode, TextNode
 from llama_index.core.node_parser import SimpleNodeParser
 from llama_index.core.text_splitter import TokenTextSplitter
 import torch
-from src.llms.local_model import LocalLLM
-from src.llms.api_model import API_LLM
-from src.configs.config import kv_cache_output_dir, src_docs_dir, docs_dir, milvus_host, milvus_port, milvus_collection_name, milvus_dim
+from llms.local_model import LocalLLM
+from llms.api_model import API_LLM
+from configs.config import kv_cache_output_dir, src_docs_dir, docs_dir, milvus_host, milvus_port, milvus_collection_name, milvus_dim
 from typing import List
 from tqdm import tqdm
 import os
 import logging
+from embeddings.base import HuggingfaceEmbeddings
+from retrievers.milvus import MilvusDB
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -61,10 +63,11 @@ class KVCachedNodeParser(SimpleNodeParser):
         documents: List[Document]
     ) -> List[BaseNode]:
         llm = LocalLLM()
-        llm.set_prompt('''<|im_start|>system
-            你是一个准确可靠的AI助手，能够借助外部文档回答问题。如果文档中包含正确答案，你会给出准确的回答。如果文档中没有包含答案，你会生成"由于文档中信息不足，我无法回答这个问题。"<|im_end|>
-            <|im_start|>user
-            文档:''')
+        # llm.set_prompt('''<|im_start|>system
+        #     你是一个准确可靠的AI助手，能够借助外部文档回答问题。如果文档中包含正确答案，你会给出准确的回答。如果文档中没有包含答案，你会生成"由于文档中信息不足，我无法回答这个问题。"<|im_end|>
+        #     <|im_start|>user
+        #     文档:''')
+        llm.set_prompt('')
         nodes = []
         for doc_id, document in tqdm(enumerate(documents)):
             for chunk_id, chunk_text in enumerate(document.text.splitlines()):
@@ -76,29 +79,22 @@ class Preprocessor:
     def __init__(self):
         pass
     
-    def _setup_milvus(self):
-        pass
-        
-    
     def _store_in_milvus(self, nodes: List[BaseNode]):
+        milvus = MilvusDB()
+        milvus.construct_index()
+
         """将节点存储到Milvus"""
-        texts = []
-        embeddings = []
-        kvcache_paths = []
-        
+        embedding_model = HuggingfaceEmbeddings(model_name="BAAI/bge-base-zh-v1.5")
+        data = []
         for node in nodes:
-            texts.append(node.text)
-            embeddings.append(self.embedding_model.get_text_embedding(node.text))
-            kvcache_paths.append(node.metadata["kvcache_file_path"])
-        
-        # 批量插入数据
-        entities = [
-            texts,
-            embeddings,
-            kvcache_paths
-        ]
-        self.collection.insert(entities)
-        self.collection.flush()
+            data.append({
+                "id":node.id_,
+                "vector":embedding_model.get_text_embedding(node.text),
+                "text":node.text,
+                "kv_path":node.metadata["kvcache_file_path"],
+            })
+        milvus.insert(data)
+        logger.info(f"数据插入完成，总量：{len(nodes)}")
     
     def get_nodes(self) -> List[BaseNode]:
         """
@@ -111,10 +107,6 @@ class Preprocessor:
     
     def prepare_kv_cache(self):
         nodes = self.get_nodes()
-
-        self.embedding_model = HuggingFaceEmbedding(model_name="BAAI/bge-base-zh-v1.5")
-
-        self._setup_milvus()
         self._store_in_milvus(nodes)
 
     def compress_context(self):
@@ -139,7 +131,7 @@ class Preprocessor:
                 # 处理文档内容：假设 document.text 是字符串，我们一行一行地处理
                 for line in document.text.splitlines():
                     # LLM提取关键信息
-                    logger.info(f'压缩：{line[:10]}...')
+                    # logger.info(f'压缩：{line[:10]}...')
                     processed_line = llm.complete(line)
                     if processed_line:  # 去除空行
                         f.write(processed_line + '\n')
