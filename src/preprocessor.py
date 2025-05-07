@@ -11,6 +11,7 @@ from tqdm import tqdm
 import os
 import logging
 from embeddings.base import HuggingfaceEmbeddings
+from prompt.prompt_compress import COMPRESS_PREFIX
 from retrievers.milvus import MilvusDB
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -63,11 +64,6 @@ class KVCachedNodeParser(SimpleNodeParser):
         documents: List[Document]
     ) -> List[BaseNode]:
         llm = LocalLLM()
-        # llm.set_prompt('''<|im_start|>system
-        #     你是一个准确可靠的AI助手，能够借助外部文档回答问题。如果文档中包含正确答案，你会给出准确的回答。如果文档中没有包含答案，你会生成"由于文档中信息不足，我无法回答这个问题。"<|im_end|>
-        #     <|im_start|>user
-        #     文档:''')
-        llm.set_prompt('')
         nodes = []
         for doc_id, document in tqdm(enumerate(documents)):
             for chunk_id, chunk_text in enumerate(document.text.splitlines()):
@@ -112,11 +108,7 @@ class Preprocessor:
     def compress_context(self):
         # llm = API_LLM()
         llm = LocalLLM()
-        llm.set_prompt('''<|im_start|>system
-            请对以下文本进行去冗余处理，保留关键信息。只需要返回一个版本，且是完整的自然段落形式，不要重复输出、不要分段、不要编号、不要加标题。<|im_end|>
-            <|im_start|>user
-            以下是原文档内容：
-            ''')
+        llm.set_prompt(COMPRESS_PREFIX)
         documents = SimpleDirectoryReader(src_docs_dir).load_data()
         for doc_id, document in enumerate(tqdm(documents, desc="Processing files")):
             # 获取原始文件名（假设 metadata 中有 'file_name' 字段）

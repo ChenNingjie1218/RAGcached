@@ -3,7 +3,7 @@ from llama_index.core.llms import CustomLLM, CompletionResponseGen, CompletionRe
 import time
 import torch
 from src.configs.config import model_path, kv_cache_output_dir
-from typing import Any
+from typing import Any, Optional, List
 from pydantic import Field
 from transformers.cache_utils import (
     DynamicCache,
@@ -25,7 +25,8 @@ class LocalLLM(CustomLLM):
     tokenizer: Any = Field(default=None, description="HuggingFace分词器")
     streamer: Any = Field(default=None, description="文本流生成器")
     prefix_cache: Any = Field(default=None, description="PREFIX的KV cache")
-    PREFIX: Any = Field(default=None, description="PREFIX")
+    PREFIX: str = Field(default='', description="PREFIX")
+    use_kv_cache: bool = Field(default=False, description="是否使用kv cache进行推理")
     
     def __init__(self):
         """
@@ -73,7 +74,7 @@ class LocalLLM(CustomLLM):
             batch_past_key_values.append((keys, values))
         return tuple(batch_past_key_values)
     
-    def stream_complete(self, prompt: str) -> CompletionResponseGen:
+    def stream_complete(self, prompt: str, key_values: Optional[List[DynamicCache]] = None) -> CompletionResponseGen:
         """
         流式生成文本
         
@@ -97,14 +98,23 @@ class LocalLLM(CustomLLM):
             new_prompt = self.PREFIX+prompt+'<|im_end|><|im_start|>assistant\n'
             first_token_received = False
             inputs = self.tokenizer(new_prompt, return_tensors="pt").to(self.model.device)
+            if self.use_kv_cache:
+                past_key_values = copy.deepcopy(self.prefix_cache)
+                if key_values is not None:
+                    past_key_values = self.stack_past_key_values([past_key_values] + key_values)
 
-            past_key_values = copy.deepcopy(self.prefix_cache)
-            generation_kwargs = {
-                **inputs,
-                "max_new_tokens": 512,
-                "streamer": self.streamer,
-                "past_key_values": past_key_values,
-            }
+                generation_kwargs = {
+                    **inputs,
+                    "max_new_tokens": 512,
+                    "streamer": self.streamer,
+                    "past_key_values": past_key_values,
+                }
+            else:
+                generation_kwargs = {
+                    **inputs,
+                    "max_new_tokens": 512,
+                    "streamer": self.streamer
+                }
             
             # 使用多线程进行生成
             import threading
@@ -133,7 +143,7 @@ class LocalLLM(CustomLLM):
             str: 生成的完整文本
         """
         try:
-            start_time = time.perf_counter()
+            # start_time = time.perf_counter()
             new_prompt = self.PREFIX+prompt+'<|im_end|><|im_start|>assistant\n'
             inputs = self.tokenizer(new_prompt, return_tensors="pt").to(self.model.device)
             past_key_values = copy.deepcopy(self.prefix_cache)
@@ -145,8 +155,8 @@ class LocalLLM(CustomLLM):
             
             outputs = self._safe_generate(**generation_kwargs)
             response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-            duration = time.perf_counter() - start_time  # 计算TTFT
-            print(f'耗时{duration}')
+            # duration = time.perf_counter() - start_time  # 计算TTFT
+            # print(f'耗时{duration}')
             # 移除输入提示词，只返回生成的文本
             return response.split('assistant')[-1].strip()
             
@@ -156,4 +166,7 @@ class LocalLLM(CustomLLM):
     def _safe_generate(self, **kwargs):
         with torch.no_grad():
             return self.model.generate(**kwargs)
+        
+    def set_use_kv_cache(self, use_kv_cache : bool = False):
+        self.use_kv_cache = use_kv_cache
     
