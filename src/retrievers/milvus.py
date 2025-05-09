@@ -37,7 +37,7 @@ class MilvusDB:
 
     def query_vectors(self, query_vectors):
         start_time = time.perf_counter()
-        output_fields = ["text", "kv_path"]
+        output_fields = ["text", "kv_file"]
         res = self.client.search(
             collection_name=self.collection_name,  # target collection
             data=query_vectors,  # query vectors

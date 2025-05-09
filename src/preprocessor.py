@@ -46,14 +46,15 @@ class KVCachedNodeParser(SimpleNodeParser):
         past_key_values = outputs.past_key_values
         
         # kvcache_file_path = f'{kv_cache_output_dir}/kvcache_chunk_{chunk_id}.pt'
-        kvcache_file_path = f'kvcache_chunk_{chunk_id}.pt'
-        torch.save(past_key_values, kvcache_file_path)
+        kvcache_file = f'kvcache_chunk_{chunk_id}.pt'
+        path = os.path.join(kv_cache_output_dir, kvcache_file)
+        torch.save(past_key_values, path)
         
         node = TextNode(
             text=chunk_text,
             id_=f'chunk_{chunk_id}',
             metadata={
-                "kvcache_file_path": kvcache_file_path
+                "kvcache_file": kvcache_file
             }
         )
         return node
@@ -112,8 +113,8 @@ class Preprocessor:
                 "vector": vectors[i],
                 "text": node.text
             }
-            if "kvcache_file_path" in node.metadata:
-                item["kv_path"] = node.metadata["kvcache_file_path"]
+            if "kvcache_file" in node.metadata:
+                item["kv_file"] = node.metadata["kvcache_file"]
             data.append(item)
         total = len(data)
         batch_size = 8000

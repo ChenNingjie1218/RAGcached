@@ -1,4 +1,5 @@
 
+import os
 import time
 import torch
 from src.prompt.prompt_query import QUERY_PREFIX
@@ -6,7 +7,7 @@ from src.embeddings.base import HuggingfaceEmbeddings
 from src.llms.local_model import LocalLLM
 from src.retrievers.milvus import MilvusDB
 import logging
-from src.configs.config import embedding_model_path, log_path
+from src.configs.config import embedding_model_path, log_path, kv_cache_output_dir
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,8 @@ class RAG:
         for resp in responses:
             docs = docs + resp['entity']['text']
             if key_values is not None:
-                key_value = torch.load(resp['entity']['kv_path'], weights_only=False)
+                path = os.path.join(kv_cache_output_dir, resp['entity']['kv_file'])
+                key_value = torch.load(path, weights_only=False)
                 key_values.append(key_value)
         prompt = docs + '\n问题:\n' + query
         
@@ -66,7 +68,8 @@ class RAG:
         for resp in responses:
             docs += resp['entity']['text']
             if key_values is not None:
-                key_value = torch.load(resp['entity']['kv_path'], weights_only=False)
+                path = os.path.join(kv_cache_output_dir, resp['entity']['kv_file'])
+                key_value = torch.load(path, weights_only=False)
                 key_values.append(key_value)
 
         prompt = docs + '\n问题:\n' + query
