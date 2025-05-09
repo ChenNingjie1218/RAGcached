@@ -2,7 +2,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStream
 from llama_index.core.llms import CustomLLM, CompletionResponseGen, CompletionResponse
 import time
 import torch
-from src.configs.config import model_path, kv_cache_output_dir
+from src.configs.config import model_path, log_path
 from typing import Any, Optional, List
 from pydantic import Field
 from transformers.cache_utils import (
@@ -27,6 +27,8 @@ class LocalLLM(CustomLLM):
     prefix_cache: Any = Field(default=None, description="PREFIX的KV cache")
     PREFIX: str = Field(default='', description="PREFIX")
     use_kv_cache: bool = Field(default=False, description="是否使用kv cache进行推理")
+    total_time: Any = Field(default=None, description="调度总耗时")
+    total_count: Any = Field(default=None, description="调度总次数")
     
     def __init__(self):
         """
@@ -45,10 +47,19 @@ class LocalLLM(CustomLLM):
                 trust_remote_code=True
             )
             self.streamer = TextIteratorStreamer(self.tokenizer, skip_prompt=True)
+            self.total_time = 0
+            self.total_count = 0
             
         except Exception as e:
             raise RuntimeError(f"模型加载失败: {str(e)}")
         
+    def __del__(self):
+        if self.total_count > 0:
+            avg_time = self.total_time / self.total_count
+            log_msg = f"LLM调用次数: {self.total_count}, Total time: {self.total_time:.4f}s, Average time: {avg_time:.4f}s\n"
+            with open(log_path, 'a') as f:
+                f.write(log_msg)
+
     def set_prompt(self, prefix: str):
         self.PREFIX = prefix
         prefix_inputs = self.tokenizer(self.PREFIX, return_tensors="pt").to(self.model.device)
@@ -143,7 +154,7 @@ class LocalLLM(CustomLLM):
             str: 生成的完整文本
         """
         try:
-            # start_time = time.perf_counter()
+            start_time = time.perf_counter()
             new_prompt = self.PREFIX+prompt+'<|im_end|><|im_start|>assistant\n'
             inputs = self.tokenizer(new_prompt, return_tensors="pt").to(self.model.device)
             past_key_values = copy.deepcopy(self.prefix_cache)
@@ -155,8 +166,9 @@ class LocalLLM(CustomLLM):
             
             outputs = self._safe_generate(**generation_kwargs)
             response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-            # duration = time.perf_counter() - start_time  # 计算TTFT
-            # print(f'耗时{duration}')
+            duration = time.perf_counter() - start_time 
+            self.total_time += duration
+            self.total_count += 1
             # 移除输入提示词，只返回生成的文本
             return response.split('assistant')[-1].strip()
             

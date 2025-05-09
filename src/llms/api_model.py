@@ -1,5 +1,7 @@
+import time
 from src.configs.config import API_KEY
 from openai import OpenAI
+from src.prompt.prompt_compress import COMPRESS_PREFIX
 
 class API_LLM:
     def __init__(self):
@@ -10,8 +12,7 @@ class API_LLM:
                 base_url="https://openrouter.ai/api/v1",
                 api_key=API_KEY,
             )
-        self.PREFIX = '''我需要适合RAG知识库的压缩文本，请你将文档内容进行去冗余、保留关键信息，只返回压缩后的文本。以下是文档内容：
-                        '''
+        self.PREFIX = COMPRESS_PREFIX
 
     @property
     def metadata(self):
@@ -33,6 +34,7 @@ class API_LLM:
             str: 生成的完整文本
         """
         try:
+            start_time = time.perf_counter()
             content = self.PREFIX + prompt
             completion = self.client.chat.completions.create(
                 model="qwen/qwen3-235b-a22b:free",
@@ -43,7 +45,8 @@ class API_LLM:
                     }
                 ]
             )
-            
+            duration = time.perf_counter() - start_time 
+            print(f'耗时{duration}')
             return completion.choices[0].message.content
             
         except Exception as e:
