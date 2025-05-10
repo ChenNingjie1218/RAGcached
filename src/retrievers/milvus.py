@@ -2,6 +2,11 @@ import time
 from pymilvus import MilvusClient
 from src.configs.config import milvus_data_path, log_path
 import os
+
+import logging
+logging.basicConfig(filename=log_path, level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+
 class MilvusDB:
     def __init__(self, file_name:str='test.db') -> None:
         path = os.path.join(milvus_data_path, file_name)
@@ -14,8 +19,7 @@ class MilvusDB:
         if self.total_count > 0:
             avg_time = self.total_time / self.total_count
             log_msg = f"向量检索次数: {self.total_count}, Total time: {self.total_time:.4f}s, Average time: {avg_time:.4f}s\n"
-            with open(log_path, 'a') as f:
-                f.write(log_msg)
+            logger.info(log_msg)
 
     def close(self):
         self.client.close()

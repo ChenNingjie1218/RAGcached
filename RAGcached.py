@@ -78,7 +78,7 @@ if __name__ == "__main__":
     if args.chunk_kvcache:
         logger.info('正在制作kv cache并构建数据库')
         Preprocessor = Preprocessor()
-        Preprocessor.prepare(kv_cahce=True)
+        Preprocessor.prepare(kv_cache=True)
         logger.info('构建完成')
     
     if args.origin_prepare:

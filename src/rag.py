@@ -8,7 +8,7 @@ from src.llms.local_model import LocalLLM
 from src.retrievers.milvus import MilvusDB
 import logging
 from src.configs.config import embedding_model_path, log_path, kv_cache_output_dir
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(file_name=log_path, level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 class RAG:
@@ -25,8 +25,7 @@ class RAG:
         if self.total_count > 0:
             avg_time = self.total_time / self.total_count
             log_msg = f"查询次数: {self.total_count}, Total time: {self.total_time:.4f}s, Average time: {avg_time:.4f}s\n"
-            with open(log_path, 'a') as f:
-                f.write(log_msg)
+            logger.info(log_msg)
 
     def set_use_kv_cache(self, use : bool):
         self.llm.set_use_kv_cache(use)

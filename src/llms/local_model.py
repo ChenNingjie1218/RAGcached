@@ -9,6 +9,9 @@ from transformers.cache_utils import (
     DynamicCache,
 )
 import copy
+import logging
+logging.basicConfig(filename=log_path, level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
 class StopOnTokens(StoppingCriteria):
     def __init__(self, stop_ids):
@@ -57,8 +60,7 @@ class LocalLLM(CustomLLM):
         if self.total_count > 0:
             avg_time = self.total_time / self.total_count
             log_msg = f"LLM调用次数: {self.total_count}, Total time: {self.total_time:.4f}s, Average time: {avg_time:.4f}s\n"
-            with open(log_path, 'a') as f:
-                f.write(log_msg)
+            logger.info(log_msg)
 
     def set_prompt(self, prefix: str):
         self.PREFIX = prefix
