@@ -77,13 +77,22 @@ class LocalLLM(CustomLLM):
             "context_window": 32768,  # Qwen2.5-7B 的上下文窗口大小
             "num_output": 1280,  # 与 max_new_tokens 保持一致
         }
-    
+    def get_layer_device(self, layer_idx):
+        try:
+            # 假设模型是 HuggingFace Transformers 风格的
+            layer_name = f"model.layers.{layer_idx}"
+            module = self.model.get_submodule(layer_name)
+            return next(module.parameters()).device
+        except Exception as e:
+            raise RuntimeError(f"无法获取第 {layer_idx} 层设备: {e}")
+        
     def stack_past_key_values(self, past_key_values_list):
         num_layers = len(past_key_values_list[0])
         batch_past_key_values = []
         for layer in range(num_layers):
-            keys = torch.cat([past_key_values[layer][0] for past_key_values in past_key_values_list], dim=2)
-            values = torch.cat([past_key_values[layer][1] for past_key_values in past_key_values_list], dim=2)
+            layer_device = self.get_layer_device(layer)
+            keys = torch.cat([past_key_values[layer][0].to(layer_device) for past_key_values in past_key_values_list], dim=2)
+            values = torch.cat([past_key_values[layer][1].to(layer_device) for past_key_values in past_key_values_list], dim=2)
             batch_past_key_values.append((keys, values))
         return tuple(batch_past_key_values)
     
@@ -145,7 +154,7 @@ class LocalLLM(CustomLLM):
         except Exception as e:
             raise RuntimeError(f"文本生成失败: {str(e)}")
     
-    def complete(self, prompt: str) -> str:
+    def complete(self, prompt: str, key_values: Optional[List[DynamicCache]] = None) -> str:
         """
         非流式生成文本
         
@@ -159,12 +168,21 @@ class LocalLLM(CustomLLM):
             start_time = time.perf_counter()
             new_prompt = self.PREFIX+prompt+'<|im_end|><|im_start|>assistant\n'
             inputs = self.tokenizer(new_prompt, return_tensors="pt").to(self.model.device)
-            past_key_values = copy.deepcopy(self.prefix_cache)
-            generation_kwargs = {
-                **inputs,
-                "max_new_tokens": 512,
-                "past_key_values": past_key_values,
-            }
+            if self.use_kv_cache:
+                past_key_values = copy.deepcopy(self.prefix_cache)
+                if key_values is not None:
+                    past_key_values = self.stack_past_key_values([past_key_values] + key_values)
+
+                generation_kwargs = {
+                    **inputs,
+                    "max_new_tokens": 512,
+                    "past_key_values": past_key_values,
+                }
+            else:
+                generation_kwargs = {
+                    **inputs,
+                    "max_new_tokens": 512,
+                }
             
             outputs = self._safe_generate(**generation_kwargs)
             response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)

@@ -1,4 +1,5 @@
 
+from concurrent.futures import ThreadPoolExecutor
 import os
 import time
 import torch
@@ -35,23 +36,31 @@ class RAG:
         self.milvus.close()
         self.milvus = MilvusDB(filename)
 
+    def _load_key_value_cache(self, path):
+        return torch.load(path, map_location="cpu", weights_only=False)
+
     def query(self, query : str):
         start_time = time.perf_counter()
         vector = self.embedding_model.embed_query(query)
         responses = self.milvus.query_vectors([vector])[0]
         docs = ''
         key_values = [] if self.use_kv_cache else None
+        paths = []
         for resp in responses:
             docs = docs + resp['entity']['text']
             if key_values is not None:
                 path = os.path.join(kv_cache_output_dir, resp['entity']['kv_file'])
-                key_value = torch.load(path, weights_only=False)
-                key_values.append(key_value)
+                paths.append(path)
+
+        if key_values is not None:
+            # 并行加载所有 key_value 文件
+            with ThreadPoolExecutor() as executor:
+                key_values.extend(executor.map(self._load_key_value_cache, paths))
         prompt = docs + '\n问题:\n' + query
         
         # for response in self.llm.stream_complete(prompt):
             # print(response.text, end="", flush=True)
-        result = self.llm.complete(prompt)
+        result = self.llm.complete(prompt, key_values)
         end_time = time.perf_counter()  # 结束计时
         elapsed = end_time - start_time
         self.total_time += elapsed
@@ -64,14 +73,19 @@ class RAG:
 
         docs = ''
         key_values = [] if self.use_kv_cache else None
+        paths = []
         for resp in responses:
-            docs += resp['entity']['text']
+            docs = docs + resp['entity']['text']
             if key_values is not None:
                 path = os.path.join(kv_cache_output_dir, resp['entity']['kv_file'])
-                key_value = torch.load(path, weights_only=False)
-                key_values.append(key_value)
+                paths.append(path)
+
+        if key_values is not None:
+            # 并行加载所有 key_value 文件
+            with ThreadPoolExecutor() as executor:
+                key_values.extend(executor.map(self._load_key_value_cache, paths))
 
         prompt = docs + '\n问题:\n' + query
         # 流式生成
-        for response in self.llm.stream_complete(prompt):
+        for response in self.llm.stream_complete(prompt, key_values):
             yield response.text
