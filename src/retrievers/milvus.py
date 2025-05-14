@@ -18,7 +18,7 @@ class MilvusDB:
     def __del__(self):
         if self.total_count > 0:
             avg_time = self.total_time / self.total_count
-            log_msg = f"向量检索次数: {self.total_count}, Total time: {self.total_time:.4f}s, Average time: {avg_time:.4f}s\n"
+            log_msg = f"向量检索次数: {self.total_count}, Average time: {avg_time:.4f}s\n"
             logger.info(log_msg)
 
     def close(self):

@@ -7,10 +7,10 @@ from src.rag import RAG
 from src.preprocessor import Preprocessor
 from src.configs.config import log_path
 
-
-
 logging.basicConfig(filename=log_path, level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
+from src.logger.performance_logger import PerformanceLogger
 
 def start_rag_server(rag:RAG):
     from fastapi import FastAPI, HTTPException
@@ -89,17 +89,20 @@ if __name__ == "__main__":
     
     if args.mode == 'rag':
         logger.info('正在运行 rag 模式，不用kv cache进行RAG流程')
+        PerformanceLogger.reset_logger(log_file="rag.json")
         rag = RAG()
         rag.set_milvus_db("cached.db")
         start_rag_server(rag)
     elif args.mode == 'kvcache':
         logger.info('正在运行 kvcache 模式，使用kv cache进行RAG流程')
+        PerformanceLogger.reset_logger(log_file="kvcache.json")
         rag = RAG()
         rag.set_use_kv_cache(use=True)
         rag.set_milvus_db("cached.db")
         start_rag_server(rag)
     elif args.mode == 'origin':
         logger.info('正在运行 origin 模式，使用未预处理的数据进行常规RAG')
+        PerformanceLogger.reset_logger(log_file="origin.json")
         rag = RAG()
         rag.set_milvus_db("origin.db")
         start_rag_server(rag)

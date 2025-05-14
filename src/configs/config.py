@@ -30,3 +30,4 @@ API_KEY = ""
 
 # 日志
 log_path = os.path.join(base_dir, "log", "rag.log")
+performance_log_path = os.path.join(base_dir, "log")

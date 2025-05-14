@@ -13,6 +13,8 @@ import logging
 logging.basicConfig(filename=log_path, level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+from src.logger.performance_logger import PerformanceLogger
+
 class StopOnTokens(StoppingCriteria):
     def __init__(self, stop_ids):
         self.stop_ids = stop_ids
@@ -32,6 +34,8 @@ class LocalLLM(CustomLLM):
     use_kv_cache: bool = Field(default=False, description="是否使用kv cache进行推理")
     total_time: Any = Field(default=None, description="调度总耗时")
     total_count: Any = Field(default=None, description="调度总次数")
+    stack_total_time: Any = Field(default=None, description="加载KV Cache(to GPU)及拼接的总耗时")
+    stack_total_count: Any = Field(default=None, description="拼接KV Cache总次数")
     
     def __init__(self):
         """
@@ -50,8 +54,14 @@ class LocalLLM(CustomLLM):
                 trust_remote_code=True
             )
             self.streamer = TextIteratorStreamer(self.tokenizer, skip_prompt=True)
+
+            # 调用
             self.total_time = 0
             self.total_count = 0
+
+            # kv cache拷贝到GPU及拼接
+            self.stack_total_time = 0
+            self.stack_total_count = 0
             
         except Exception as e:
             raise RuntimeError(f"模型加载失败: {str(e)}")
@@ -59,7 +69,8 @@ class LocalLLM(CustomLLM):
     def __del__(self):
         if self.total_count > 0:
             avg_time = self.total_time / self.total_count
-            log_msg = f"LLM调用次数: {self.total_count}, Total time: {self.total_time:.4f}s, Average time: {avg_time:.4f}s\n"
+            avg_stack_time = self.stack_total_time / self.stack_total_count if self.stack_total_count > 0 else 0
+            log_msg = f"LLM调用次数: {self.total_count}, Average time: {avg_time*1000:.1f}ms, Average stack time: {avg_stack_time*1000:.1f}ms"
             logger.info(log_msg)
 
     def set_prompt(self, prefix: str):
@@ -171,17 +182,24 @@ class LocalLLM(CustomLLM):
             if self.use_kv_cache:
                 past_key_values = copy.deepcopy(self.prefix_cache)
                 if key_values is not None:
+                    stack_time = time.perf_counter()
                     past_key_values = self.stack_past_key_values([past_key_values] + key_values)
+                    stack_duration = time.perf_counter() - stack_time
+                    self.stack_total_time += stack_duration
+                    self.stack_total_count += 1
+                    PerformanceLogger.record_event("Local_LLM", "stack_kv_cache", {"stack_time":stack_duration*1000})
 
                 generation_kwargs = {
                     **inputs,
-                    "max_new_tokens": 512,
+                    # "max_new_tokens": 512,
+                    "max_new_tokens": 1,
                     "past_key_values": past_key_values,
                 }
             else:
                 generation_kwargs = {
                     **inputs,
-                    "max_new_tokens": 512,
+                    # "max_new_tokens": 512,
+                    "max_new_tokens": 1,
                 }
             
             outputs = self._safe_generate(**generation_kwargs)
@@ -189,6 +207,7 @@ class LocalLLM(CustomLLM):
             duration = time.perf_counter() - start_time 
             self.total_time += duration
             self.total_count += 1
+            PerformanceLogger.record_event("Local_LLM", "complete", {"complete_time":duration*1000})
             # 移除输入提示词，只返回生成的文本
             return response.split('assistant')[-1].strip()
             
