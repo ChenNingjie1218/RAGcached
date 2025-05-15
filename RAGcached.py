@@ -6,6 +6,7 @@ import argparse
 from src.rag import RAG
 from src.preprocessor import Preprocessor
 from src.configs.config import log_path
+from src.llms.local_model import LocalLLM
 
 logging.basicConfig(filename=log_path, level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -49,6 +50,43 @@ def start_rag_server(rag:RAG):
     # 添加启动服务器的代码
     uvicorn.run(app, host="0.0.0.0", port=10080)
 
+def start_llm_server(llm:LocalLLM):
+    from fastapi import FastAPI, HTTPException
+    from fastapi.responses import StreamingResponse
+    import json
+    app = FastAPI()
+
+    @app.post("/stream_query")
+    async def stream_query(request: dict):
+        try:
+            query_text = request.get("query", "")
+            if not query_text:
+                return {"error": "缺少 query 参数"}
+            logger.info(f"用户问题：{query_text}")
+            async def generate():
+                for chunk in llm.stream_complete(query_text):
+                    yield f"data: {json.dumps({'answer': chunk})}\n\n"
+
+            return StreamingResponse(generate(), media_type="text/event-stream")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
+    
+    @app.post("/query")
+    async def query(request: dict):
+        try:
+            query_text = request.get("query", "")
+            if not query_text:
+                return {"error": "缺少 query 参数"}
+            logger.debug(f"用户问题：{query_text}")
+            return {
+                "answer" : llm.complete(query_text)
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
+    import uvicorn
+    # 添加启动服务器的代码
+    uvicorn.run(app, host="0.0.0.0", port=10080)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(allow_abbrev=False, description="运行RAGcached...")
     parser.add_argument('--compress', action='store_true', help='上下文压缩')
@@ -60,10 +98,11 @@ if __name__ == "__main__":
         logger.info('正在进行上下文压缩...')
         propressor = Preprocessor()
         # for idx in [1, 2, 3]:
-        idx = 3
+        # idx = 3
         processes = []
-        for group_num in range(6,10):
-            part = f'_{group_num}_part_{idx}'
+        for group_num in range(1,4):
+            # part = f'_{group_num}_part_{idx}'
+            part = f'docs_{group_num}.txt'
         # for group_num in range(1,4):
         #     part = f'_11_part_{group_num}'
             p = Process(target=propressor.compress_context, args=(part,))
@@ -108,6 +147,9 @@ if __name__ == "__main__":
         start_rag_server(rag)
     elif args.mode == 'no':
         logger.info('不进行RAG流程')
+        PerformanceLogger.reset_logger(log_file="no.json")
+        llm = LocalLLM()
+        start_llm_server(llm)
     else:
         logger.info('模式错误')
     
