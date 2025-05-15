@@ -77,8 +77,10 @@ class LocalLLM(CustomLLM):
         self.PREFIX = prefix
         prefix_inputs = self.tokenizer(self.PREFIX, return_tensors="pt").to(self.model.device)
         with torch.no_grad():
-            self.prefix_cache = DynamicCache()
-            self.prefix_cache = self.model(**prefix_inputs, past_key_values = self.prefix_cache).past_key_values
+            outputs = self.model(**prefix_inputs, use_cache=True)
+            self.prefix_cache = outputs.past_key_values
+            # self.prefix_cache = DynamicCache()
+            # self.prefix_cache = self.model(**prefix_inputs, past_key_values = self.prefix_cache).past_key_values
     
     @property
     def metadata(self):
@@ -191,15 +193,15 @@ class LocalLLM(CustomLLM):
 
                 generation_kwargs = {
                     **inputs,
-                    # "max_new_tokens": 512,
-                    "max_new_tokens": 1,
+                    "max_new_tokens": 512,
+                    # "max_new_tokens": 1,
                     "past_key_values": past_key_values,
                 }
             else:
                 generation_kwargs = {
                     **inputs,
-                    # "max_new_tokens": 512,
-                    "max_new_tokens": 1,
+                    "max_new_tokens": 512,
+                    # "max_new_tokens": 1,
                 }
             
             outputs = self._safe_generate(**generation_kwargs)
