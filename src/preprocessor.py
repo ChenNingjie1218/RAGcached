@@ -37,7 +37,7 @@ class KVCachedNodeParser(SimpleNodeParser):
         if not model or not tokenizer:
             raise ValueError("Model and tokenizer must be provided in kwargs")
             
-        chunk_text = "<|doc_start|>" + chunk_text + "<|doc_end|>"
+        chunk_text = '<|document_sep|>' + chunk_text
         inputs = tokenizer(chunk_text, return_tensors="pt").to(model.device)
         
         with torch.no_grad():

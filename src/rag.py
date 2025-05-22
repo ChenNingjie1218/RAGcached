@@ -81,7 +81,7 @@ class RAG:
                 # self.load_total_time += time.perf_counter() - load_time
                 # self.load_total_count += 1
 
-
+        query = '<|document_sep|>\n问题:\n' + query
         if key_values is not None:
             # 并行加载所有 key_value 文件
             with ThreadPoolExecutor() as executor:
@@ -91,7 +91,7 @@ class RAG:
             self.load_total_time += load_duration
             self.load_total_count += 1
             PerformanceLogger.record_event("RAG", "load_kv_cache", {"load_time":load_duration*1000})
-        prompt = docs + '\n问题:\n' + query
+        prompt = docs + query 
         
         # for response in self.llm.stream_complete(prompt):
             # print(response.text, end="", flush=True)
@@ -122,7 +122,7 @@ class RAG:
         #     with ThreadPoolExecutor() as executor:
         #         key_values.extend(executor.map(self._load_key_value_cache, paths))
 
-        prompt = docs + '\n问题:\n' + query
+        prompt = docs + '<|document_sep|>\n问题：' + query
         # 流式生成
         for response in self.llm.stream_complete(prompt, key_values):
             yield response.text

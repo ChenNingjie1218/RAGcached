@@ -1,4 +1,4 @@
-from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer, StoppingCriteria, StoppingCriteriaList
+from transformers import AutoTokenizer, TextIteratorStreamer, StoppingCriteria
 from llama_index.core.llms import CustomLLM, CompletionResponseGen, CompletionResponse
 import time
 import torch
@@ -52,6 +52,8 @@ class LocalLLM(CustomLLM):
                 model_path,
                 trust_remote_code=True
             )
+            SPECIAL_SEP_TOKEN = '<|document_sep|>'
+            self.tokenizer.add_special_tokens({"additional_special_tokens": [SPECIAL_SEP_TOKEN]})
             self.streamer = TextIteratorStreamer(self.tokenizer, skip_prompt=True)
 
             # 调用
@@ -75,6 +77,8 @@ class LocalLLM(CustomLLM):
     def set_prompt(self, prefix: str):
         self.PREFIX = prefix
         prefix_inputs = self.tokenizer(self.PREFIX, return_tensors="pt").to(self.model.device)
+        # token_count = prefix_inputs.input_ids.shape[1]
+        # print(f"prefix的 token 数量: {token_count}")
         with torch.no_grad():
             outputs = self.model(**prefix_inputs, use_cache=True)
             self.prefix_cache = outputs.past_key_values
@@ -119,7 +123,7 @@ class LocalLLM(CustomLLM):
         try:
             # 在生成开始前就开始计时
             start_time = time.perf_counter()
-            new_prompt = self.PREFIX+prompt+'<|im_end|><|im_start|>assistant\n'
+            new_prompt = self.PREFIX+prompt+'<|document_sep|><|im_start|>assistant\n'
             first_token_received = False
             inputs = self.tokenizer(new_prompt, return_tensors="pt").to(self.model.device)
             if self.use_kv_cache:
@@ -167,9 +171,10 @@ class LocalLLM(CustomLLM):
             str: 生成的完整文本
         """
         try:
-            start_time = time.perf_counter()
-            new_prompt = self.PREFIX+prompt+'<|im_end|><|im_start|>assistant\n'
+            new_prompt = self.PREFIX + prompt + '<|document_sep|><|im_start|>assistant\n'
             inputs = self.tokenizer(new_prompt, return_tensors="pt").to(self.model.device)
+            token_count = inputs.input_ids.shape[1]
+            PerformanceLogger.record_event("Local_LLM", "input_token_count", {"token_count":token_count})
             if self.use_kv_cache:
                 past_key_values = self.prefix_cache
                 if key_values is not None:
@@ -182,19 +187,22 @@ class LocalLLM(CustomLLM):
 
                 generation_kwargs = {
                     **inputs,
-                    "max_new_tokens": 512,
-                    # "max_new_tokens": 1,
+                    # "max_new_tokens": 512,
+                    "max_new_tokens": 1,
                     "past_key_values": past_key_values,
+                    "return_dict_in_generate":True,  
                 }
             else:
                 generation_kwargs = {
                     **inputs,
-                    "max_new_tokens": 512,
-                    # "max_new_tokens": 1,
+                    # "max_new_tokens": 512,
+                    "return_dict_in_generate":True,
+                    "max_new_tokens": 1,
                 }
-            
+            start_time = time.perf_counter()
             outputs = self._safe_generate(**generation_kwargs)
-            response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+            # response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+            response = self.tokenizer.decode(outputs.sequences[0], skip_special_tokens=True)
             duration = time.perf_counter() - start_time 
             self.total_time += duration
             self.total_count += 1
@@ -211,4 +219,3 @@ class LocalLLM(CustomLLM):
         
     def set_use_kv_cache(self, use_kv_cache : bool = False):
         self.use_kv_cache = use_kv_cache
-    
