@@ -1,7 +1,8 @@
-from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer, StoppingCriteria, StoppingCriteriaList
+from transformers import AutoTokenizer, TextIteratorStreamer, StoppingCriteria
 from llama_index.core.llms import CustomLLM, CompletionResponseGen, CompletionResponse
 import time
 import torch
+from src.llms.qwen2 import Qwen2ModifiedForCausalLM
 from src.configs.config import model_path, log_path
 from typing import Any, Optional, List
 from pydantic import Field
@@ -42,7 +43,7 @@ class LocalLLM(CustomLLM):
         """
         try:
             super().__init__()
-            self.model = AutoModelForCausalLM.from_pretrained(
+            self.model = Qwen2ModifiedForCausalLM.from_pretrained(
                 model_path,
                 device_map="auto",
                 torch_dtype=torch.float16,
@@ -52,6 +53,8 @@ class LocalLLM(CustomLLM):
                 model_path,
                 trust_remote_code=True
             )
+            SPECIAL_SEP_TOKEN = '<|document_sep|>'
+            self.tokenizer.add_special_tokens({"additional_special_tokens": [SPECIAL_SEP_TOKEN]})
             self.streamer = TextIteratorStreamer(self.tokenizer, skip_prompt=True)
 
             # 调用
@@ -75,9 +78,17 @@ class LocalLLM(CustomLLM):
     def set_prompt(self, prefix: str):
         self.PREFIX = prefix
         prefix_inputs = self.tokenizer(self.PREFIX, return_tensors="pt").to(self.model.device)
+        # token_count = prefix_inputs.input_ids.shape[1]
+        # print(f"输入的 token 数量: {token_count}")
         with torch.no_grad():
+            # self.model.set_apply_rope(False)
             outputs = self.model(**prefix_inputs, use_cache=True)
             self.prefix_cache = outputs.past_key_values
+            # self.model.set_apply_rope(True)
+            # 取第一个 layer 的 key 看长度（所有层应该一致）
+            # first_layer_key = self.prefix_cache[0][0]  # shape: (batch_size, num_heads, seq_len, head_dim)
+            # cache_length = first_layer_key.shape[2]  # seq_len 维度
+            # print(f"KV Cache 中缓存的 token 数量: {cache_length}")
     
     @property
     def metadata(self):
@@ -87,20 +98,12 @@ class LocalLLM(CustomLLM):
             "context_window": 32768,  # Qwen2.5-7B 的上下文窗口大小
             "num_output": 1280,  # 与 max_new_tokens 保持一致
         }
-    def get_layer_device(self, layer_idx):
-        try:
-            # 假设模型是 HuggingFace Transformers 风格的
-            layer_name = f"model.layers.{layer_idx}"
-            module = self.model.get_submodule(layer_name)
-            return next(module.parameters()).device
-        except Exception as e:
-            raise RuntimeError(f"无法获取第 {layer_idx} 层设备: {e}")
-        
+
     def stack_past_key_values(self, past_key_values_list):
         num_layers = len(past_key_values_list[0])
         batch_past_key_values = []
         for layer in range(num_layers):
-            layer_device = self.get_layer_device(layer)
+            layer_device = self.model.get_layer_device(layer)
             keys = torch.cat([past_key_values[layer][0].to(layer_device) for past_key_values in past_key_values_list], dim=2)
             values = torch.cat([past_key_values[layer][1].to(layer_device) for past_key_values in past_key_values_list], dim=2)
             batch_past_key_values.append((keys, values))
@@ -119,7 +122,7 @@ class LocalLLM(CustomLLM):
         try:
             # 在生成开始前就开始计时
             start_time = time.perf_counter()
-            new_prompt = self.PREFIX+prompt+'<|im_end|><|im_start|>assistant\n'
+            new_prompt = self.PREFIX+prompt+'<|document_sep|><|im_start|>assistant\n'
             first_token_received = False
             inputs = self.tokenizer(new_prompt, return_tensors="pt").to(self.model.device)
             if self.use_kv_cache:
@@ -167,9 +170,10 @@ class LocalLLM(CustomLLM):
             str: 生成的完整文本
         """
         try:
-            start_time = time.perf_counter()
-            new_prompt = self.PREFIX+prompt+'<|im_end|><|im_start|>assistant\n'
+            new_prompt = self.PREFIX + prompt + '<|document_sep|><|im_start|>assistant\n'
             inputs = self.tokenizer(new_prompt, return_tensors="pt").to(self.model.device)
+            token_count = inputs.input_ids.shape[1]
+            PerformanceLogger.record_event("Local_LLM", "input_token_count", {"token_count":token_count})
             if self.use_kv_cache:
                 past_key_values = self.prefix_cache
                 if key_values is not None:
@@ -179,26 +183,33 @@ class LocalLLM(CustomLLM):
                     self.stack_total_time += stack_duration
                     self.stack_total_count += 1
                     PerformanceLogger.record_event("Local_LLM", "stack_kv_cache", {"stack_time":stack_duration*1000})
-
+                # prefix_len = past_key_values[0][0].shape[2]
+                # print(f"KV Cache:{prefix_len}")
+                # print(f'token:{token_count}')
+                rotary_time = time.perf_counter()
+                # past_key_values = self.model.apply_rotary_pos_emb_for_past_key_values(inputs.input_ids, past_key_values)
+                rotary_duration = time.perf_counter() - rotary_time
+                PerformanceLogger.record_event("Local_LLM", "rotary", {"rotary_time":rotary_duration*1000})
                 generation_kwargs = {
                     **inputs,
-                    "max_new_tokens": 512,
-                    # "max_new_tokens": 1,
+                    # "max_new_tokens": 512,
+                    "max_new_tokens": 1,
                     "past_key_values": past_key_values,
                 }
             else:
                 generation_kwargs = {
                     **inputs,
-                    "max_new_tokens": 512,
-                    # "max_new_tokens": 1,
+                    # "max_new_tokens": 512,
+                    "max_new_tokens": 1,
                 }
-            
+            start_time = time.perf_counter()
             outputs = self._safe_generate(**generation_kwargs)
             response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
             duration = time.perf_counter() - start_time 
             self.total_time += duration
             self.total_count += 1
             PerformanceLogger.record_event("Local_LLM", "complete", {"complete_time":duration*1000})
+            print(f"complete_time:{duration*1000}ms")
             # 移除输入提示词，只返回生成的文本
             return response.split('assistant')[-1].strip()
             

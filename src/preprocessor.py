@@ -37,7 +37,7 @@ class KVCachedNodeParser(SimpleNodeParser):
         if not model or not tokenizer:
             raise ValueError("Model and tokenizer must be provided in kwargs")
             
-        chunk_text = "<|doc_start|>" + chunk_text + "<|doc_end|>"
+        chunk_text = '<|document_sep|>' + chunk_text
         inputs = tokenizer(chunk_text, return_tensors="pt").to(model.device)
         
         with torch.no_grad():
@@ -66,11 +66,14 @@ class KVCachedNodeParser(SimpleNodeParser):
         documents: List[Document]
     ) -> List[BaseNode]:
         llm = LocalLLM()
+        # 不采用RoPE
+        llm.model.set_apply_rope(False)
         nodes = []
         for doc_id, document in tqdm(enumerate(documents)):
             for chunk_id, chunk_text in enumerate(document.text.splitlines()):
                 node = self.process_chunk(chunk_text, f"{doc_id}_{chunk_id}", model=llm.model, tokenizer=llm.tokenizer)
                 nodes.append(node)
+        llm.model.set_apply_rope(True)
         return nodes
 
 class LineNodeParser(SimpleNodeParser):
