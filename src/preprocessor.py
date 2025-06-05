@@ -1,12 +1,14 @@
-from llama_cloud import TokenTextSplitter
+from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.schema import BaseNode, TextNode
 from llama_index.core.node_parser import SimpleNodeParser
 from llama_index.core.text_splitter import TokenTextSplitter
+from pydantic import Field
 import torch
 from src.llms.local_model import LocalLLM
+from src.llms.local_model import AutoTokenizer
 from src.llms.api_model import API_LLM
-from src.configs.config import kv_cache_output_dir, src_docs_dir, docs_dir, embedding_model_path
-from typing import List
+from src.configs.config import kv_cache_output_dir, src_docs_dir, docs_dir, embedding_model_path, model_path
+from typing import Any, List
 from tqdm import tqdm
 import os
 import logging
@@ -81,14 +83,123 @@ class LineNodeParser(SimpleNodeParser):
         documents: List[Document]
     ) -> List[BaseNode]:
         nodes = []
+        tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+        SPECIAL_SEP_TOKEN = '<|document_sep|>'
+        tokenizer.add_special_tokens({"additional_special_tokens": [SPECIAL_SEP_TOKEN]})
         for document in tqdm(documents):
             for chunk_id, chunk_text in enumerate(document.text.splitlines()):
+                chunk_text = '<|document_sep|>' + chunk_text
+                chunk_tokens = tokenizer.encode(chunk_text, add_special_tokens=False)
+                token_count = len(chunk_tokens)
                 node = TextNode(
                     text=chunk_text,
-                    id_=f'chunk_{chunk_id}'
+                    id_=f'chunk_{chunk_id}',
+                    metadata={
+                        "token_count": token_count
+                    }
                 )
                 nodes.append(node)
         return nodes
+    
+class HybridTokenNodeParser(SimpleNodeParser):
+    pad_token_id: Any = Field(default=None, description="pad token")
+    chunk_size: int = Field(default=128, description="固定大小分块")
+    tokenizer: Any = Field(default=None, description="HuggingFace分词器")
+    sentence_splitter: Any = Field(default=None, description="SentenceSplitter（用于按句子拆分）")
+    needpad: bool = Field(default=False, description="是否填充")
+    def __init__(
+        self,
+        needpad = False,
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+        self.chunk_size = 128
+
+        # 加载 Qwen Tokenizer
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+        self.needpad = needpad
+        if needpad:
+            pad_token = "."
+            # 验证 pad_token 是否存在
+            if pad_token not in self.tokenizer.get_vocab():
+                raise ValueError(f"Padding token '{pad_token}' not found in tokenizer vocabulary.")
+            self.pad_token_id = self.tokenizer.encode(pad_token, add_special_tokens=False)[0]
+
+        # 初始化 SentenceSplitter（用于按句子拆分）
+        self.sentence_splitter = SentenceSplitter(
+            tokenizer=self.tokenizer.encode,
+            chunk_size=self.chunk_size,
+            chunk_overlap=0
+        )
+
+    def get_nodes_from_documents(
+        self,
+        documents: List[Document],
+        **kwargs
+    ) -> List[TextNode]:
+        nodes = []
+        node_counter = 0
+
+        for doc_idx, document in enumerate(tqdm(documents, desc="Processing Documents")):
+            # 1. 按行分割
+            lines = document.text.splitlines()
+
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue  # 跳过空行
+
+                # 2. 按句子拆分
+                sentences = self.sentence_splitter.split_text(line)
+
+                # 3. 合并句子到 512 token
+                current_chunk = []
+                current_length = 0
+
+                for sentence in sentences:
+                    sentence_tokens = self.tokenizer.encode(sentence, add_special_tokens=False)
+                    sentence_length = len(sentence_tokens)
+
+                    if current_length + sentence_length <= self.chunk_size:
+                        current_chunk.append(sentence)
+                        current_length += sentence_length
+                    else:
+                        # 当前 chunk 已满，生成节点
+                        chunk_text = " ".join(current_chunk)
+                        if self.needpad:
+                            padded_text = self._pad_chunk(self.tokenizer.encode(chunk_text, add_special_tokens=False))
+                        else:
+                            padded_text = chunk_text
+                        nodes.append(
+                            TextNode(text=padded_text, id_=f"doc_{doc_idx}_chunk_{node_counter}")
+                        )
+                        node_counter += 1
+
+                        # 开始新 chunk
+                        current_chunk = [sentence]
+                        current_length = sentence_length
+
+                # 处理剩余内容
+                if current_chunk:
+                    chunk_text = " ".join(current_chunk)
+                    if self.needpad:
+                        padded_text = self._pad_chunk(self.tokenizer.encode(chunk_text, add_special_tokens=False))
+                    else:
+                        padded_text = chunk_text
+                    nodes.append(
+                        TextNode(text=padded_text, id_=f"doc_{doc_idx}_chunk_{node_counter}")
+                    )
+                    node_counter += 1
+
+        return nodes
+
+    def _pad_chunk(self, token_ids: List[int]) -> str:
+        if len(token_ids) >= self.chunk_size:
+            return self.tokenizer.decode(token_ids[:self.chunk_size], skip_special_tokens=False)
+
+        pad_length = self.chunk_size - len(token_ids)
+        padded_ids = token_ids + [self.pad_token_id] * pad_length
+        return self.tokenizer.decode(padded_ids, skip_special_tokens=False)
 
 class Preprocessor:
     def __init__(self):
@@ -115,6 +226,8 @@ class Preprocessor:
             }
             if "kvcache_file" in node.metadata:
                 item["kv_file"] = node.metadata["kvcache_file"]
+            if "token_count" in node.metadata:
+                item["token_count"] = node.metadata["token_count"]
             data.append(item)
         total = len(data)
         batch_size = 8000
@@ -133,10 +246,18 @@ class Preprocessor:
         """
         if use_kv_cache:
             documents = SimpleDirectoryReader(docs_dir).load_data()
-            node_parser = KVCachedNodeParser()
+            # node_parser = KVCachedNodeParser()
+            node_parser = LineNodeParser()
         else:
             documents = SimpleDirectoryReader(src_docs_dir).load_data()
             node_parser = LineNodeParser()
+        # if use_kv_cache:
+        #     documents = SimpleDirectoryReader(docs_dir).load_data()
+        #     node_parser = HybridTokenNodeParser(needpad=True)
+        # else:
+        #     documents = SimpleDirectoryReader(src_docs_dir).load_data()
+        #     node_parser = HybridTokenNodeParser()
+
         nodes = node_parser.get_nodes_from_documents(documents)
         return nodes
     
