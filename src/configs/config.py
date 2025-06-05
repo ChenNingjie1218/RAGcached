@@ -7,17 +7,17 @@ base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 kv_cache_output_dir = os.path.join(base_dir, "data", "tmp_kv_cache")
 
 # 源数据路径
-src_docs_dir = os.path.join(base_dir, "data", "80000_docs")
-# src_docs_dir = os.path.join(base_dir, "data", "test_docs")
+# src_docs_dir = os.path.join(base_dir, "data", "80000_docs")
+src_docs_dir = os.path.join(base_dir, "data", "test_docs")
 
 # 压缩处理后数据路径
-docs_dir = os.path.join(base_dir, "data", "compress_docs")
-# docs_dir = os.path.join(base_dir, "data", "test_compress_docs")
+# docs_dir = os.path.join(base_dir, "data", "compress_docs")
+docs_dir = os.path.join(base_dir, "data", "test_compress_docs")
 
 # 模型路径
 # model_path = "/home/data/Model/llama-7b"
 model_path = "/home/data/Model/Qwen2.5-7B-Instruct"
-embedding_model_path = "/home/jokerjay/rag/RAGcached/sentence-transformers/bge-base-zh-v1.5"
+embedding_model_path = "/mnt/nvme0n1p1/RAGcached/sentence-transformers/bge-base-zh-v1.5"
 
 # Milvus配置
 # milvus_host = "localhost"
@@ -31,3 +31,6 @@ API_KEY = ""
 # 日志
 log_path = os.path.join(base_dir, "log", "rag.log")
 performance_log_path = os.path.join(base_dir, "log")
+
+# kv cache system
+MAX_TRIE_NODE_COUNT = 800

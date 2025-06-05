@@ -41,11 +41,11 @@ class MilvusDB:
 
     def query_vectors(self, query_vectors):
         start_time = time.perf_counter()
-        output_fields = ["text", "kv_file"]
+        output_fields = ["text", "kv_file", "token_count"]
         res = self.client.search(
             collection_name=self.collection_name,  # target collection
             data=query_vectors,  # query vectors
-            limit=8,  # number of returned entities
+            limit=16,  # number of returned entities
             output_fields=output_fields,  # specifies fields to be returned
         )
         end_time = time.perf_counter()  # 结束计时

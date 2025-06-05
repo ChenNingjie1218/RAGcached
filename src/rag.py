@@ -1,8 +1,10 @@
 
 from concurrent.futures import ThreadPoolExecutor
 import os
+import random
 import time
 import torch
+from src.retrievers.kvcachetrie import KVCacheTrie
 from src.prompt.prompt_query import QUERY_PREFIX
 from src.embeddings.base import HuggingfaceEmbeddings
 from src.llms.local_model import LocalLLM
@@ -68,39 +70,55 @@ class RAG:
         vector = self.embedding_model.embed_query(query)
         responses = self.milvus.query_vectors([vector])[0]
         docs = ''
+        node_set = []
+        id_to_info = {}
         key_values = [] if self.use_kv_cache else None
-        paths = []
-        load_time = time.perf_counter()
+        chunk_info = [] if self.use_kv_cache else None
+
         for resp in responses:
-            docs = docs + resp['entity']['text']
-            if key_values is not None:
-                load_time = time.perf_counter()
-                path = os.path.join(kv_cache_output_dir, resp['entity']['kv_file'])
-                paths.append(path)
-                # key_values.append(self._load_key_value_cache(path))
-                # self.load_total_time += time.perf_counter() - load_time
-                # self.load_total_count += 1
+            id_to_info[resp['id']] = {
+                'text':resp['entity']['text'],
+                'token_count':resp['entity']['token_count']
+            }
+            node_set.append(resp['id'])
+        # random.shuffle(node_set) # 测试随机顺序对RAG系统有没有影响
+        load_time = time.perf_counter()
+        if self.use_kv_cache:
+            ''' chunk 重排 '''
+            kvsystem = KVCacheTrie()
+            path = kvsystem.search_longest_path(node_set)
+            sorted_nodes = []
+            for node in path:
+                key_values.append(node.kv)
+                sorted_nodes.append(node.id)
+            # 剩余部分
+            remaining = [nid for nid in node_set if nid not in sorted_nodes]
+
+            # 剔除根节点
+            node_set = sorted_nodes[1:] + remaining
+
+        total_token = 0
+        for node in node_set:
+            docs += id_to_info[node]['text']
+            if chunk_info is not None:
+                chunk_info.append({
+                    'id': node,
+                    'token_count':id_to_info[node]['token_count']
+                })
+                total_token += id_to_info[node]['token_count']
+                # print(f"chunk token: {id_to_info[node]['token_count']}")
+        # print(f"chunk total token: {total_token}")
 
         query = '<|document_sep|>\n问题:\n' + query
-        if key_values is not None:
-            # 并行加载所有 key_value 文件
-            with ThreadPoolExecutor() as executor:
-                key_values.extend(executor.map(self._load_key_value_cache, paths))
-        # print(f'加载kv cache耗时：{time.perf_counter()-load_time:.4f} s')
-            load_duration = time.perf_counter() - load_time
-            self.load_total_time += load_duration
-            self.load_total_count += 1
-            PerformanceLogger.record_event("RAG", "load_kv_cache", {"load_time":load_duration*1000})
         prompt = docs + query 
-        
-        # for response in self.llm.stream_complete(prompt):
-            # print(response.text, end="", flush=True)
-        result = self.llm.complete(prompt, key_values)
+
+        result = self.llm.complete(prompt, key_values, chunk_info)
         end_time = time.perf_counter()  # 结束计时
         elapsed = end_time - start_time
         self.total_time += elapsed
         self.total_count += 1
         PerformanceLogger.record_event("RAG", "query", {"query_time":elapsed*1000})
+        print(f"query_time: {elapsed*1000} ms")
         return result
 
     def stream_query(self, query: str):
