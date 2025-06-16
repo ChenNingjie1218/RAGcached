@@ -33,4 +33,4 @@ log_path = os.path.join(base_dir, "log", "rag.log")
 performance_log_path = os.path.join(base_dir, "log")
 
 # kv cache system
-MAX_TRIE_NODE_COUNT = 800
+MAX_TRIE_NODE_COUNT = 1549

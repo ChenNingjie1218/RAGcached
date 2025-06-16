@@ -1,5 +1,10 @@
-from src.configs.config import MAX_TRIE_NODE_COUNT
+import torch
+from src.configs.config import MAX_TRIE_NODE_COUNT, kv_cache_output_dir
 from src.logger.performance_logger import PerformanceLogger
+import os
+from transformers.cache_utils import (
+    DynamicCache,
+)
 
 def singleton(cls):
     """装饰器：用于将类变为单例"""
@@ -16,13 +21,47 @@ class TrieNode:
     """
     def __init__(self, kv, node_id, token_count):
         self.children = {}  # 子节点字典
-        self.kv = kv
+        self._kv = kv
         self.id = node_id
         self.token_count = token_count
         self.frequency = 0
+        self._in_gpu = True
+        self._on_disk = False
+
+        # 目前只是用于测试 效率比较低 
+        self.serialize_kv()
 
     def increase_frequency(self):
         self.frequency += 1
+    
+    @property
+    def kv(self):
+        if self._on_disk or self._kv is None:
+            path = os.path.join(kv_cache_output_dir, f'{self.id}')
+            self._kv = torch.load(path, map_location="cpu", weights_only=False)
+            self._on_disk = False
+        return self._kv
+    
+    def _move_cache_to_cpu(self):
+        """将 DynamicCache 中的所有张量移动到 CPU"""
+        new_cache = DynamicCache()
+        for layer_idx in range(len(self._kv.key_cache)):
+            k = self._kv.key_cache[layer_idx].cpu()
+            v = self._kv.value_cache[layer_idx].cpu()
+            new_cache.update(k, v, layer_idx, None)
+        self._kv = new_cache
+        self._in_gpu = False
+        torch.cuda.empty_cache()
+    
+    def serialize_kv(self):
+        if self._in_gpu:
+            self._move_cache_to_cpu()
+
+        path = os.path.join(kv_cache_output_dir, f'{self.id}')
+        torch.save(self._kv, path)
+        self._on_disk = True
+        self._kv = None
+        torch.cuda.empty_cache()
 
 @singleton
 class KVCacheTrie:
@@ -33,6 +72,9 @@ class KVCacheTrie:
 
     def insert(self, node_list):
         """插入一个 KV Cache 列表作为路径"""
+        if self.node_count > MAX_TRIE_NODE_COUNT:
+            return
+        
         current = self.root
         for node_info in node_list:
             node_id = node_info['id']

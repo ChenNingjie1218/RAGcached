@@ -91,6 +91,7 @@ class RAG:
             for node in path:
                 key_values.append(node.kv)
                 sorted_nodes.append(node.id)
+                node.serialize_kv()
             # 剩余部分
             remaining = [nid for nid in node_set if nid not in sorted_nodes]
 
