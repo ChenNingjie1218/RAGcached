@@ -90,9 +90,9 @@ def start_llm_server(llm:LocalLLM):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(allow_abbrev=False, description="运行RAGcached...")
     parser.add_argument('--compress', action='store_true', help='上下文压缩')
-    parser.add_argument('--chunk_kvcache', action='store_true', help='制作kv cache并构建数据库')
+    parser.add_argument('--chunk_kvcache', action='store_true', help='正在构建预处理后的数据库')
     parser.add_argument('--origin_prepare', action='store_true', help='构建未预处理的数据库')
-    parser.add_argument('--mode',  default='no', choices=['rag', 'kvcache', 'origin', 'no'], required=False, help='模式:1.rag 常规RAG流程 2.kvcache 使用KV Cache的RAG流程 3.origin 使用未预处理的数据进行常规RAG')
+    parser.add_argument('--mode',  default='no', choices=['rag', 'kvcache', 'origin', 'no', 'llm'], required=False, help='模式:1.rag 常规RAG流程 2.kvcache 使用KV Cache的RAG流程 3.origin 使用未预处理的数据进行常规RAG')
     args = parser.parse_args()
     if args.compress:
         logger.info('正在进行上下文压缩...')
@@ -115,7 +115,7 @@ if __name__ == "__main__":
         print("所有进程已完成！")
 
     if args.chunk_kvcache:
-        logger.info('正在制作kv cache并构建数据库')
+        logger.info('正在构建预处理后的数据库')
         Preprocessor = Preprocessor()
         Preprocessor.prepare(kv_cache=True)
         logger.info('构建完成')
@@ -145,11 +145,17 @@ if __name__ == "__main__":
         rag = RAG()
         rag.set_milvus_db("origin.db")
         start_rag_server(rag)
-    elif args.mode == 'no':
+    elif args.mode == 'llm':
         logger.info('不进行RAG流程')
         PerformanceLogger.reset_logger(log_file="no.json")
         llm = LocalLLM()
         start_llm_server(llm)
+    elif args.mode == 'no':
+        logger.info('仅构建数据库')
+    elif args.mode == 'vllm':
+        logger.info('采用vllm')
+        PerformanceLogger.reset_logger(log_file='vllm.json')
+        
     else:
         logger.info('模式错误')
     
