@@ -49,21 +49,56 @@ print_length_stats(original_lengths, "Original", total_original_chars)
 print_length_stats(compressed_lengths, "Compressed", total_compressed_chars)
 
 
-# 绘制双直方图
-plt.figure(figsize=(10, 6))
-plt.hist(original_lengths, bins=50, alpha=0.6, color='blue', label='Original Text')
-plt.hist(compressed_lengths, bins=50, alpha=0.6, color='green', label='Compressed Text')
+# # 绘制双直方图
+# plt.figure(figsize=(10, 6))
+# plt.hist(original_lengths, bins=50, alpha=0.6, color='blue', label='Original Text')
+# plt.hist(compressed_lengths, bins=50, alpha=0.6, color='green', label='Compressed Text')
 
-# 添加标签和样式
+# # 添加标签和样式
+# plt.xlabel('Text Length (chars)')
+# plt.ylabel('Frequency')
+# plt.title('Distribution of Text Length Before and After Compression')
+# plt.legend()
+# plt.grid(True, linestyle='--', alpha=0.5)
+
+# # 保存图像
+# plt.tight_layout()
+# plt.savefig(os.path.join(base_dir, "chart", 'compression.png'), dpi=300, bbox_inches='tight')
+
+# 显示图像
+# plt.show()
+
+
+plt.figure(figsize=(10, 6))
+
+# 原始文本 — 蓝色 + 斜向纹理
+plt.hist(
+    original_lengths,
+    bins=50,
+    label='Original Text',
+    color='#4A90E2',            # 蓝色
+    edgecolor='black',
+    alpha=0.6,                  # 半透明保证重叠可见
+    hatch='///'
+)
+
+# 压缩文本 — 绿色 + 横向纹理
+plt.hist(
+    compressed_lengths,
+    bins=50,
+    label='Compressed Text',
+    color='#50E3C2',            # 绿色
+    edgecolor='black',
+    alpha=0.6,
+    hatch='\\\\\\'
+)
+
 plt.xlabel('Text Length (chars)')
 plt.ylabel('Frequency')
 plt.title('Distribution of Text Length Before and After Compression')
 plt.legend()
 plt.grid(True, linestyle='--', alpha=0.5)
-
-# 保存图像
 plt.tight_layout()
-plt.savefig(os.path.join(base_dir, "chart", 'compression.png'), dpi=300, bbox_inches='tight')
 
-# 显示图像
-# plt.show()
+plt.savefig(os.path.join(base_dir, "chart", 'compression.png'),
+            dpi=300, bbox_inches='tight')
